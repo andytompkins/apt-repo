@@ -1,0 +1,15 @@
+repo = /srv/repo
+packager = /usr/bin/dpkg
+archiver = /usr/bin/apt-ftparchive
+
+synchronizer = /usr/bin/s3cmd
+synchronizer_args = "-v --delete-removed --follow-symlinks"
+synchronizer_target = s3://apt.mydomain.com/repo/
+
+origin = "My Company Name Inc"
+label = MyDomain.com
+suite = stable
+codename = universal
+components = main
+architectures = "amd64 i386 source"
+description = "debian packages"

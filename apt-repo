@@ -1,0 +1,247 @@
+#!/usr/bin/perl
+
+use Config::Simple;
+use Text::Template;
+use File::Find::Rule;
+
+sub add_package;
+sub add_dist;
+sub remove_package;
+sub remove_dist;
+sub show_packages;
+sub show_dists;
+sub sync;
+sub usage;
+sub update_packages;
+
+my $cfg_dir = '/etc/apt-repo';
+my $cfg = new Config::Simple("$cfg_dir/repo.conf");
+my $repo = $cfg->param('repo');
+my $packager = $cfg->param('packager');
+my $archiver = $cfg->param('archiver');
+my $origin = $cfg->param('origin');
+my $label = $cfg->param('label');
+my $suite = $cfg->param('suite');
+my $codename = $cfg->param('codename');
+my $component = $cfg->param('components');
+my $description = $cfg->param('description');
+my $arch_list = $cfg->param('architectures');
+my @architectures = split /\s+/, $arch_list;
+
+my $cmd = shift @ARGV;
+if (!$cmd) { usage(); }
+if ($cmd eq "add") {
+	my $what = shift @ARGV;
+	if ($what eq "package") {
+		my $file = shift @ARGV;
+		my $dist = shift @ARGV;
+		if (!$file || !$dist || @ARGV) { usage(); }
+		add_package($file, $dist);
+	} elsif ($what eq "dist") {
+		my $dist = shift @ARGV;
+		if (!$dist || @ARGV) { usage(); }
+		add_dist($dist);		
+	} else {
+		usage();
+	}
+} elsif ($cmd eq "remove") {
+	my $what = shift @ARGV;
+	if ($what eq "package") {
+		my $package = shift @ARGV;
+		my $dist = shift @ARGV;
+		if (!$package || !$dist || @ARGV) { usage(); }
+		remove_package($package, $dist);
+	} elsif ($what eq "dist") {
+		my $dist = shift @ARGV;
+		if (!$dist || @ARGV) { usage(); }
+		remove_dist($dist);		
+	} else {
+		usage();
+	}
+} elsif ($cmd eq "show") {
+	my $what = shift @ARGV;
+	if ($what eq "packages") {
+		my $dist = shift @ARGV;
+		if (!$dist || @ARGV) { usage(); }
+		show_packages($dist);
+	} elsif ($what eq "dists") {
+		if (@ARGV) { usage(); }
+		show_dists();
+	} else {
+		usage();
+	}
+} elsif ($cmd eq "sync") {
+	my $dist = shift @ARGV;
+	if (!$dist || @ARGV) { usage(); }
+	sync($dist);
+} else {
+	usage();
+}
+
+sub usage {
+	print "Usage:\n";
+	print "\tapt-repo add dist <dist>\n";
+	print "\tapt-repo add package <file.deb> <dist>\n";
+	print "\tapt-repo remove dist <dist>\n";
+	print "\tapt-repo remove package <full-pkg-name> <dist>\n";
+	print "\tapt-repo show packages <dist>\n";
+	print "\tapt-repo show dists\n";
+	print "\tapt-repo sync <dist>\n";
+	exit 0;
+}
+
+
+sub add_package {
+	my ($file, $dist) = @_;
+	my $get_arch_cmd = "$packager -I $file|grep Architecture:|awk '{print \$2}'";
+	my $arch = `$get_arch_cmd`;
+	chomp $arch;
+	my $get_section_cmd = "$packager -I $file|grep Section:|awk '{print \$2}'";
+	my $section = `$get_section_cmd`;
+	chomp $section;
+	my $arch_dir = "";
+	if ($arch ne "source") {
+		$arch_dir = "binary-";
+	}
+	$arch_dir .= $arch;
+	my $copy_cmd = "/bin/cp $file $repo/dists/$dist/$section/$arch_dir/";
+	`$copy_cmd`;
+	#print "copy = $copy_cmd\n";
+
+	update_packages($dist);
+
+	exit 1;
+}
+
+sub add_dist {
+	my $dist = shift @_;
+	my %template_data = (	origin => $origin,
+				label => $label,
+				suite => $suite,
+				codename => $codename,
+				component => $component,
+				description => $description,
+				repo => $repo,
+				dist => $dist
+			);
+	my $template = Text::Template->new(SOURCE => 'apt-release.tmpl') or die "Couldn't construct template: $Text::Template::ERROR";
+	my $release_config = $template->fill_in(HASH => \%template_data);
+	if (!defined $release_config) { die "Couldn't fill in template: $Text::Template::ERROR"; }
+
+	open RELEASE_CONFIG_FILE, ">$cfg_dir/apt-$dist-release.conf" or die "Couldn't open $cfg_dir/apt-$dist-release.conf: $!\n";
+	print RELEASE_CONFIG_FILE $release_config;
+	close RELEASE_CONFIG_FILE;
+
+	mkdir "$repo/dists/$dist";
+	mkdir "$repo/dists/$dist/$component";
+	
+	foreach my $arch (@architectures) {
+		my $dirname = "";
+		if ($arch ne "source") {
+			$dirname .= "binary-";
+		}
+		$dirname .= $arch;
+		mkdir "$repo/dists/$dist/$component/$dirname";
+		
+		my %template_data = (	origin => $origin,
+					label => $label,
+					suite => $suite,
+					component => $component,
+					description => $description,
+					arch => $arch
+				);
+		my $template = Text::Template->new(SOURCE => 'arch-release.tmpl') or die "Couldn't construct template: $Text::Template::ERROR";
+		my $arch_release = $template->fill_in(HASH => \%template_data);
+		if (!defined $arch_release) { die "Couldn't fill in template: $Text::Template::ERROR"; }
+
+		open ARCH_RELEASE_FILE, ">$repo/dists/$dist/$component/$dirname/Release" or die "Couldn't open Release file for $component/$dirname: $!\n";
+		print ARCH_RELEASE_FILE $arch_release;
+		close ARCH_RELEASE_FILE;
+	}
+	
+	update_packages($dist);
+
+	exit 1;
+}
+
+sub remove_package {
+	my ($pkgver, $dist) = @_;
+	my @debs = File::Find::Rule->name('*.deb')->in("$repo/dists/$dist/");
+	foreach my $file (@debs) {
+		my $get_pkg_cmd = "$packager -I $file|grep Package:|awk '{print \$2}'";
+		my $pkg = `$get_pkg_cmd`;
+		chomp $pkg;
+		my $get_version_cmd = "$packager -I $file|grep Version:|awk '{print \$2}'";
+		my $version = `$get_version_cmd`;
+		chomp $version;
+		my $fullname = $pkg . "_" . $version;
+		if ($fullname eq $pkgver) {
+			my $remove_cmd = "/bin/rm -f $file";
+			`$remove_cmd`;
+			
+			update_packages($dist);
+
+			exit 1;
+		}
+	}
+	print "$pkgver not found.\n";
+	exit 1;
+}
+
+sub remove_dist {
+	my $dist = shift @_;
+	# TODO: add confirmation?
+	my $remove_cmd = "/bin/rm -rf $repo/dists/$dist";
+	`$remove_cmd`;
+	$remove_cmd = "/bin/rm -f $cfg_dir/apt-$dist-release.conf";
+	`$remove_cmd`;
+	exit 1;
+}
+
+sub show_packages {
+	my $dist = shift @_;
+	my @debs = File::Find::Rule->name('*.deb')->in("$repo/dists/$dist/");
+	foreach my $file (@debs) {
+		my $get_pkg_cmd = "$packager -I $file|grep Package:|awk '{print \$2}'";
+		my $pkg = `$get_pkg_cmd`;
+		chomp $pkg;
+		my $get_version_cmd = "$packager -I $file|grep Version:|awk '{print \$2}'";
+		my $version = `$get_version_cmd`;
+		chomp $version;
+		print $pkg . "_" . $version . "\n";
+	}
+	exit 1;
+}
+
+sub show_dists {
+	my $dot_dirs = File::Find::Rule->name( qr/^\.\.?$/ );
+	my @dists = File::Find::Rule->directory->maxdepth(1)->not($dot_dirs)->relative->in("$repo/dists/");
+	foreach my $dist (@dists) {
+		print "$dist\n";
+	}	
+	exit 1;
+}
+
+sub sync {
+	print "sync not implemented yet\n";
+	#s3cmd -v --delete-removed --follow-symlinks sync /srv/repo/ s3://apt.clearcapital.com/repo/
+	exit 1;
+}
+
+sub update_packages {
+	my $dist = shift @_;
+
+	#apt-ftparchive generate /etc/apt-repo/apt-universal-release.conf
+	#apt-ftparchive -c /etc/apt-repo/apt-universal-release.conf release /srv/repo/dists/universal/ >/srv/repo/dists/universal/Release
+
+	my $gen_cmd = "$archiver generate $cfg_dir/apt-$dist-release.conf";
+	my $output = `$gen_cmd`;
+	print $output;
+
+	#print "gen = $gen_cmd\n";
+
+	my $release_cmd = "$archiver -c $cfg_dir/apt-$dist-release.conf release $repo/dists/$dist/ > $repo/dists/$dist/Release";
+	$output = `$release_cmd`;
+
+	#print "release = $release_cmd\n";
+}
