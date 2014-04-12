@@ -28,6 +28,10 @@ my $description = $cfg->param('description');
 my $arch_list = $cfg->param('architectures');
 my @architectures = split /\s+/, $arch_list;
 
+my $sync = $cfg->param('synchronizer');
+my $sync_args = $cfg->param('synchronizer_args');
+my $sync_dest = $cfg->param('synchronizer_target');
+
 my $cmd = shift @ARGV;
 if (!$cmd) { usage(); }
 if ($cmd eq "add") {
@@ -223,8 +227,9 @@ sub show_dists {
 }
 
 sub sync {
-	print "sync not implemented yet\n";
-	#s3cmd -v --delete-removed --follow-symlinks sync /srv/repo/ s3://apt.clearcapital.com/repo/
+	my $sync_cmd = "$sync $sync_args sync $repo/ $sync_dest";
+	my $output = `$sync_cmd`;
+	print $output;
 	exit 1;
 }
 
