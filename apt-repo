@@ -114,7 +114,7 @@ sub add_package {
 
 	update_packages($dist);
 
-	exit 1;
+	exit 0;
 }
 
 sub add_dist {
@@ -165,7 +165,7 @@ sub add_dist {
 	
 	update_packages($dist);
 
-	exit 1;
+	exit 0;
 }
 
 sub remove_package {
@@ -185,7 +185,7 @@ sub remove_package {
 			
 			update_packages($dist);
 
-			exit 1;
+			exit 0;
 		}
 	}
 	print "$pkgver not found.\n";
@@ -199,7 +199,7 @@ sub remove_dist {
 	`$remove_cmd`;
 	$remove_cmd = "/bin/rm -f $cfg_dir/apt-$dist-release.conf";
 	`$remove_cmd`;
-	exit 1;
+	exit 0;
 }
 
 sub show_packages {
@@ -214,7 +214,7 @@ sub show_packages {
 		chomp $version;
 		print $pkg . "_" . $version . "\n";
 	}
-	exit 1;
+	exit 0;
 }
 
 sub show_dists {
@@ -223,14 +223,14 @@ sub show_dists {
 	foreach my $dist (@dists) {
 		print "$dist\n";
 	}	
-	exit 1;
+	exit 0;
 }
 
 sub sync {
 	my $sync_cmd = "$sync $sync_args sync $repo/ $sync_dest";
 	my $output = `$sync_cmd`;
 	print $output;
-	exit 1;
+	exit 0;
 }
 
 sub update_packages {
